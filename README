@@ -1,0 +1,40 @@
+OMNIBOT
+========
+
+Omnibot is a quick n' dirty IRC bot hack built in Ruby. It uses the IRC bot 
+library, Isaac and portions of this code are taken from github.com/jamiew/fatbot
+
+Omnibot includes features like Twitter posting and bitly URL shortening.
+
+For these to work, you must create two files, bitly.yaml and twitter.yaml with
+proper configurations as follows:
+
+bitly.yaml
+=========
+login: <your login>
+api_key: <your api key>
+
+twitter.yaml
+============
+consumer_key: <your consumer key>
+consumer_secret: <your consumer secret>
+oauth_token: <your oauth token>
+oauth_token_secret: <your oauth token secret>
+
+
+These values can be obtained from the corresponding API sites for Twitter and
+Bitly.
+
+
+Required packages/gems:
+==================
+- rubygems
+- twitter
+- isaac
+- isaac-formatting
+- httparty
+- time
+- json
+- open-uri
+
+
