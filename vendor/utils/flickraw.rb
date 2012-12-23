@@ -20,7 +20,7 @@
 # SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 require 'net/http'
-require 'md5'
+require 'digest/md5'
 require File.dirname(__FILE__) + "/crack-json.rb" # require 'json'
 require 'cgi'
 

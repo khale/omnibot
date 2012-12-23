@@ -12,9 +12,13 @@ require 'yaml'
 
 # custom stuff
 # for fixed-length history stack (probly a better way)
-require 'leakybucket'
+require_relative 'leakybucket'
 # URL shortening
-require 'bitly'
+require_relative 'bitly'
+
+# more stuff for preparing Isaac
+require_relative 'vendor/utils/twitter_search'
+require_relative 'vendor/utils/flickraw'
 
 HISTORY_MAX = 20
 
@@ -42,9 +46,6 @@ OMNIBOT - Command listing:
 ====================================================================
 eos
 
-# more stuff for preparing Isaac
-%w{/vendor /vendor/utils}.collect{|dir| $:.unshift File.dirname(__FILE__)+dir}
-%w{twitter_search flickraw}.collect{ |lib| require(lib).to_s }
         
 # configure IRC client opts
 configure do |c|
@@ -203,3 +204,6 @@ on :private, /^\!log\s*(\w*)\[(-?\d*)\]/ do |name, count|
         end
 end
 
+on :private, /^!say\s*:\s*(.*)/i do |txt|
+        msg HOME, txt
+end
