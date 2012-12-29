@@ -23,15 +23,19 @@ require_relative 'vendor/utils/flickraw'
 HISTORY_MAX = 20
 
 # hack to get PMs to work (channel var not scoped in PM events)
-HOME = '#systems'
+HOME = '#test'
 
 # list of channels we should join upon connecting
 CHANNELS = [{ :channel => HOME }]
+MEME_URL = "http://meme.boxofjunk.ws/moar.txt?lines=1"
+HIP_URL  = "http://meme.boxofjunk.ws/moar.txt?lines=1&vocab=hipster"
+CMD_URL  = "http://www.commandlinefu.com/commands/random/plaintext"
 
 OPTION_STR = <<-eos
 ====================================================================
 OMNIBOT - Command listing:
         !?                - display this message 
+        !cmd              - show a random command from commandlinefu
         !hipster          - generate a random hipster quote
         !meme             - generate a random meme
         !tweet: <msg>     - tweet <msg> to the NUCSystems feed
@@ -50,10 +54,10 @@ eos
 # configure IRC client opts
 configure do |c|
   c.nick     = 'omnibot'
-  c.server   = 'fourinhand.cs.northwestern.edu'
+  c.server   = 'sandu.cs.northwestern.edu'
   c.realname = 'General purpose awesome bot'
   c.port     = 6667
-  c.verbose  = true
+  c.verbose  = false
 end
 
 $twitter ||= TwitterSearch::Client.new
@@ -111,6 +115,16 @@ on :channel, /omnibot:/ do |resp|
     msg channel, "PM me wit !? for command listings"
 end
 
+on :channel, /^!cmd/ do 
+        cmd = open(CMD_URL).read
+        cmd.split("\n").last(2).each {|l| msg HOME, l}
+        $logs['omnibot'].push(cmd)
+end
+
+on :channel, /^\!\?/ do
+        OPTION_STR.split("\n").each { |s| msg channel, s }
+end
+
 on :channel do
         # ignore command strings and shortened urls
         return if message =~ /^\!/ or message =~ /url:/
@@ -129,14 +143,15 @@ on :private, /^\!\?/ do
         OPTION_STR.split("\n").each { |s| msg nick, s }
 end
 
+
 on :private, /^\!hipster$/i do
-        meme = open("http://meme.boxofjunk.ws/moar.txt?lines=1&vocab=hipster").read.chomp rescue print_error('could not reach Automeme', 1, nick)
+        meme = open(HIP_URL).read.chomp rescue print_error('could not reach Automeme', 1, nick)
         msg HOME, "#{nick}->#{meme}"
         $logs['omnibot'].push(meme)
 end
 
 on :private, /^\!meme$/i do
-        meme = open("http://meme.boxofjunk.ws/moar.txt?lines=1").read.chomp rescue  print_error('could not reach AutoMeme', 1, nick)
+        meme = open(MEME_URL).read.chomp rescue  print_error('could not reach AutoMeme', 1, nick)
         msg HOME, "#{nick}->#{meme}"
         $logs['omnibot'].push(meme)
 end
@@ -206,4 +221,10 @@ end
 
 on :private, /^!say\s*:\s*(.*)/i do |txt|
         msg HOME, txt
+end
+
+on :private, /^!cmd/ do 
+        cmd = open(CMD_URL).read
+        cmd.split("\n").last(2).each {|l| msg HOME, l}
+        $logs['omnibot'].push(cmd)
 end
