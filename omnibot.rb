@@ -11,6 +11,10 @@ require 'json'
 require 'yaml'
 require 'asciiart'
 require 'bing_translator'
+require 'hpricot'
+require 'uri'
+require 'htmlentities'
+require 'net/http'
 
 # custom stuff
 # for fixed-length history stack (probly a better way)
@@ -22,7 +26,7 @@ require_relative 'bitly'
 require_relative 'vendor/utils/twitter_search'
 require_relative 'vendor/utils/flickraw'
 
-HISTORY_MAX = 20
+HISTORY_MAX = 10000
 
 # hack to get PMs to work (channel var not scoped in PM events)
 HOME = '#systems'
@@ -43,12 +47,16 @@ OMNIBOT - Command listing: PM them to omnibot, it will respond in the message
                             things <name> said. [0] is the most recent. omnibot
                             only has a limited memory of 10 comments (for now)
                             If <name> is not provided, it will use your nick.
+        !tsearch @type @handle <msg> - search twitter for messages. type can either be
+                            'from' or 'to'. msg is optional
         !log  <name>[n]   - Works like the above, but simply displays the result
         !ascii <url>      - generate ascii art from image pointed to by url
         !translate from:<lan> to:<lan> <txt> - translate text. Supported codes:
         !translate codes  - shows available language codes in PM
         !short <url>      - shorten the url
+        !cowsay <text>    - cowsay some text
         !wiki <query>     - search for a wiki summary
+        !stats            - print participation stats
 
         url shortening: omnibot will automatically shorten URLs posted in the channel
 ====================================================================
@@ -85,6 +93,23 @@ end
 
 
 helpers do
+
+    def get_title(url)
+        doc = Hpricot(open(url))
+        return (doc/'title').text.strip.split.join(" ")
+    end
+
+    def content_type_from_head(raw_uri)
+        uri = URI.parse(raw_uri)
+        http = Net::HTTP.new(uri.host, uri.port)
+        response, data = http.head((uri.path == "" ? "/" : uri.path), nil)
+        return response.content_type
+    end
+
+    def is_html?(url)
+      content_type_from_head(url) =~ /text\/html/
+    end
+
   def shorten(target, url)
       response = $bitly.shorten "longUrl" => url
   end
@@ -102,6 +127,8 @@ helpers do
   end
 
 
+
+
   def tsearch(nick, handle, m, chan, type)
       if type == "to" 
           $client.search("to:#{handle} #{m}", :result_type => "recent").take(1).collect do |tw|
@@ -109,7 +136,7 @@ helpers do
           end
       elsif type == "from" 
           $client.search("from:#{handle} #{m}", :result_type => "recent").take(1).collect do |tw|
-              msg chan, "Most recent tweet from @#{handle} - \"#{tw.text}\""
+              msg chan, "#{color(:green)} Most recent tweet from @#{handle} - \"#{tw.text}\" #{stop_color}"
           end
       end
   end
@@ -152,6 +179,46 @@ helpers do
       end
   end
 
+  def stats(nick, chan)
+      begin 
+          cont = {}
+          sum = 0
+
+          $logs.keys.each do |k| 
+              cont[k] = $logs[k].count
+              sum += cont[k]
+          end
+
+          if sum <= 0
+              return 
+          end
+
+        
+          colors = [:red, :blue, :green, :yellow, :purple, :orange]
+          bar_length = 50
+          i = 0
+          cont.keys.sort.each do |k| 
+              frac = Float(cont[k])/Float(sum)
+              percent = frac * 100.0
+              num_dots = (frac * bar_length).to_int
+              spaces = bar_length - num_dots
+              line = "*"*num_dots + " "*spaces + " #{cont[k]} #{percent}% -> #{k}"
+              msg chan, "#{color(colors[i])} #{line} #{stop_color}"
+              i = (i+1) % 6
+          end
+
+      rescue
+          print_error("error getting stats #{$!}", nick)
+      end
+  end
+
+  def cowsay(nick, chan, txt)
+        meme = open(MEME_URL).read.chomp rescue  print_error('could not reach AutoMeme', nick)
+        url = "http://cowsay.morecode.org/say?format=text&message=#{URI.encode(txt)}"
+        cow = open(url).read rescue print_error("could not reach cowsay", nick)
+        cow.split("\n").each{|l| msg chan, l}
+  end
+
 end
 
 # after connecting to the irc server, join our channels (w/keys if specified)
@@ -163,10 +230,18 @@ end
 
 # look for urls in public channels, grab only the first one per line
 on :channel, /^(http[s]*:\/\/\S+)/ do |url|
-  resp = shorten channel, url
-  msg channel, "#{color(:blue)} url: #{resp} #{stop_color}"
-  $logs[nick] = LeakyBucket.new(HISTORY_MAX) if $logs[nick].nil?
-  $logs[nick].push(message)
+        $logs[nick] = LeakyBucket.new(HISTORY_MAX) if $logs[nick].nil?
+        $logs[nick].push(message)
+        title = ""
+        begin 
+            URI.extract(url, %w(http https)).each do |u|
+                title = HTMLEntities.new.decode(get_title(u)) if is_html?(u)
+            end
+        rescue
+            title = "[no title]"
+        end
+        u = shorten channel, url
+        msg channel, "#{color(:orange)}(#{u}) #{title}"
 end
 
 on :channel, /omnibot:/ do
@@ -204,9 +279,10 @@ on :private, /^\!wiki\s*(.*)/i do |query|
     q = query.gsub(" ", "_")
     cmd = "dig +short txt #{q}.wp.dg.cx"
     res = %x[ #{cmd} ]
-    msg HOME, "Wiki article for #{query}:"
-    msg HOME, res
+    msg HOME, "#{color(:blue)}#{nick}: wiki article for #{query}:"
+    msg HOME, "#{color(:blue)} #{res} #{stop_color}"
 end
+
 
 on :private, /^\!tsearch\s+@(\w+)\s+@(\w+)\s*(.*)/i do |type, handle, msg|
     if msg.nil?
@@ -320,8 +396,16 @@ on :private, /^\!translate\s*codes/i do
     trans_get_codes nick, HOME
 end
 
+on :private, /^!cowsay\s*(.*)/i do |txt|
+    cowsay nick, HOME, txt
+end
+
 on :private, /^\!say (.*)/i do |txt|
         msg HOME, txt
+end
+
+on :private, /^\!stats$/i do 
+    stats nick, HOME
 end
 
 on :private, /^\!cmd$/i do 
