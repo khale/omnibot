@@ -19,6 +19,7 @@ require 'net/http'
 # custom stuff
 # for fixed-length history stack (probly a better way)
 require_relative 'leakybucket'
+
 # URL shortening
 require_relative 'bitly'
 
@@ -34,31 +35,33 @@ HOME = '#systems'
 # list of channels we should join upon connecting
 CHANNELS = [{ :channel => HOME }]
 MEME_URL = "http://api.automeme.net/txt?lines=1"
+HIP_URL  = "http://api.automeme.net/txt?lines=1&vocab=hipster"
 CMD_URL  = "http://www.commandlinefu.com/commands/random/plaintext"
+COW_URL  = "http://cowsay.morecode.org/say?format=text&message="
+
 OPTION_STR = <<-eos
 ====================================================================
 OMNIBOT - Command listing: PM them to omnibot, it will respond in the message
-        !?                - display this message 
+
+        !?, !help, !usage, help   - display this message 
+        
         !cmd              - show a random command from commandlinefu
         !meme             - generate a random meme
-        !tweet: <msg>     - tweet <msg> to the NUCSystems feed
-        !tweet <name>[n]  - tweet something <name> said
-                            n is an index into an array containing the last n 
-                            things <name> said. [0] is the most recent. omnibot
-                            only has a limited memory of 10 comments (for now)
-                            If <name> is not provided, it will use your nick.
-        !tsearch @type @handle <msg> - search twitter for messages. type can either be
+        !hipster          - generate a random hipster quote
+        !tsearch type handle <msg> - search twitter for messages. type can either be
                             'from' or 'to'. msg is optional
         !log  <name>[n]   - Works like the above, but simply displays the result
-        !ascii <url>      - generate ascii art from image pointed to by url
-        !translate from:<lan> to:<lan> <txt> - translate text. Supported codes:
-        !translate codes  - shows available language codes in PM
+        !ascii [width] <url>      - generate ascii art from image pointed to by url
+        !translate <from_lan> <to_lan> <txt> 
+                          - translate text
+        !trans_codes      - shows available language codes
         !short <url>      - shorten the url
         !cowsay <text>    - cowsay some text
         !wiki <query>     - search for a wiki summary
         !stats            - print participation stats
 
         url shortening: omnibot will automatically shorten URLs posted in the channel
+
 ====================================================================
 eos
 
@@ -106,9 +109,9 @@ helpers do
         return response.content_type
     end
 
-    def is_html?(url)
-      content_type_from_head(url) =~ /text\/html/
-    end
+  def is_html?(url)
+    content_type_from_head(url) =~ /text\/html/
+  end
 
   def shorten(target, url)
       response = $bitly.shorten "longUrl" => url
@@ -122,14 +125,22 @@ helpers do
         msg nick, "#{color(:red)} *** ERROR: #{m} #{stop_color}"
   end
 
+
   def print_error_chan(m, nick, chan)
         msg chan, "#{color(:red)} *** ERROR: #{m} #{stop_color}"
   end
 
 
+  def usage(nick, chan)
+        OPTION_STR.split("\n").each { |s| msg nick, s }
+  end
+
+  def echo(nick, chan, txt)
+      txt
+  end
 
 
-  def tsearch(nick, handle, m, chan, type)
+  def tsearch(nick, chan, type, handle, m)
       if type == "to" 
           $client.search("to:#{handle} #{m}", :result_type => "recent").take(1).collect do |tw|
               msg chan, "Most recent tweet to @#{handle} - #{tw.user.screen_name}:\"#{tw.text}\""
@@ -141,43 +152,74 @@ helpers do
       end
   end
 
-  def tweet(nick, m, poster, chan)
-        begin
-                $client.update("#{nick}: \"#{m}\"")
-                print_success("#{poster} tweeted #{nick}'s message,  \"#{m}\" to @NUCSystems", chan)
-        rescue
-                print_error("Failed to update Twitter: #{$!}", nick)
-        end
+
+  #def tweet(nick, m, poster, chan)
+        #begin
+                #$client.update("#{nick}: \"#{m}\"")
+                #print_success("#{poster} tweeted #{nick}'s message,  \"#{m}\" to @NUCSystems", chan)
+        #rescue
+                #print_error("Failed to update Twitter: #{$!}", nick)
+        #end
+  #end
+
+
+  def meme(nick, chan) 
+      open(MEME_URL).read.chomp rescue print_error('could not reach AutoMeme', nick)
   end
 
-  def ascii(nick, chan, url)
+
+  def hipster(nick, chan)
+      open(HIP_URL).read.chomp rescue print_error('could not reach Automeme', nick)
+  end
+
+
+  def cmd(nick, chan)
+        open(CMD_URL).read
+  end
+
+
+  def wiki(nick, chan, query)
+      q = query.gsub(" ", "_")
+      c = "dig +short txt #{q}.wp.dg.cx"
+      res = %x[ #{c} ]
+  end
+
+
+  def ascii(nick, chan, w=60, url)
       begin 
           a = AsciiArt.new(url)
-          s = a.to_ascii_art(width: 80)
-          s.split("\n").each {|l| msg chan, l}
-      rescue
-          print_error_chan("#{nick} is a stupid bitch and tried to use an invalid link", nick, chan)
+          opts = {:width => w.to_i}
+          s = a.to_ascii_art(opts)
+          return s
+      rescue => exception
+          print_error("error: #{$!}", nick)
+          print_error(exception.backtrace, nick)
+          return ""
       end
   end
+
 
   def translate(nick, chan, from, to, txt)
     begin
         trans = $translator.translate txt , :from => from, :to => to
-        msg chan, "#{nick} says in '#{to}': #{trans}"
+        return trans
     rescue
         print_error("could not translate", nick)
+        return
     end 
   end 
 
 
-  def trans_get_codes(nick, chan)
+  def trans_codes(nick, chan)
       begin 
           codes = $translator.supported_language_codes
-          msg nick, codes
       rescue
           print_error("could not get translation codes", nick)
       end
   end
+
+
+      
 
   def stats(nick, chan)
       begin 
@@ -197,12 +239,12 @@ helpers do
           colors = [:red, :blue, :green, :yellow, :purple, :orange]
           bar_length = 50
           i = 0
-          cont.keys.sort.each do |k| 
+          cont.keys.sort_by {|key| cont[k]}.each do |k| 
               frac = Float(cont[k])/Float(sum)
               percent = frac * 100.0
               num_dots = (frac * bar_length).to_int
               spaces = bar_length - num_dots
-              line = "*"*num_dots + " "*spaces + " #{cont[k]} #{percent}% -> #{k}"
+              line = "*"*num_dots + " "*spaces + " #{cont[k]} #{percent.round(2)}% -> #{k}"
               msg chan, "#{color(colors[i])} #{line} #{stop_color}"
               i = (i+1) % 6
           end
@@ -212,14 +254,15 @@ helpers do
       end
   end
 
+
   def cowsay(nick, chan, txt)
-        meme = open(MEME_URL).read.chomp rescue  print_error('could not reach AutoMeme', nick)
-        url = "http://cowsay.morecode.org/say?format=text&message=#{URI.encode(txt)}"
+        url = COW_URL + URI.encode(txt)
         cow = open(url).read rescue print_error("could not reach cowsay", nick)
-        cow.split("\n").each{|l| msg chan, l}
+        return cow
   end
 
 end
+
 
 # after connecting to the irc server, join our channels (w/keys if specified)
 on :connect do
@@ -228,11 +271,13 @@ on :connect do
   end
 end
 
+
 # look for urls in public channels, grab only the first one per line
 on :channel, /^(http[s]*:\/\/\S+)/ do |url|
         $logs[nick] = LeakyBucket.new(HISTORY_MAX) if $logs[nick].nil?
         $logs[nick].push(message)
         title = ""
+        old = url
         begin 
             URI.extract(url, %w(http https)).each do |u|
                 title = HTMLEntities.new.decode(get_title(u)) if is_html?(u)
@@ -240,9 +285,66 @@ on :channel, /^(http[s]*:\/\/\S+)/ do |url|
         rescue
             title = "[no title]"
         end
-        u = shorten channel, url
-        msg channel, "#{color(:orange)}(#{u}) #{title}"
+        a = shorten channel, old
+        msg channel, "#{color(:orange)}(#{a}) #{title}"
 end
+
+
+# pipes!
+on :private, /(.*?)(\|)(.*)/ do |a, b, c|
+    cmds = [a,b,c].join.split("|")
+    out = nil
+
+    cmds.each do |cmd|
+        c, *args = cmd.split(" ")
+        if not args.nil?
+            args.each{|x| x.chomp}
+        else 
+            args = []
+        end
+
+        args.unshift(HOME)
+        args.unshift(nick)
+
+        # test if c exists as function
+        if not self.respond_to? c
+            print_error("command not defined: #{c}", nick)
+            return
+        end
+
+        method = c.to_sym
+        parms = self.method(method).parameters.map(&:last).map(&:to_s)
+
+        # doctor arguments
+        fargs = args.take(parms.length - 1)
+        largs = args.drop(parms.length - 1)
+
+        if not largs.empty?
+            fargs.push(largs.join(" "))
+        end
+
+        if not out.nil?
+            fargs.push(out)
+        end
+
+        if (fargs.length != parms.length)
+            print_error("mismatched arguments for command #{c}", nick)
+            return
+        end
+
+        out = self.send method, *fargs
+
+    end
+
+    # splat it to the channel
+    if out.nil?
+        return
+    else 
+        out.split("\n").each {|l| msg HOME, l}
+    end
+
+end
+
 
 on :channel, /omnibot:/ do
     msg channel, "PM me with !? for command listings"
@@ -257,73 +359,90 @@ on :channel do
         $logs[nick].push(message)
 end
 
+
 # get urls from private messages, grab only the first one per line
 on :private, /^\!short (http[s]*:\/\/\S+)/ do |url|
   resp = shorten channel, url
   msg nick, "#{color(:purple)} #{resp} #{stop_color}"
 end
 
+
+# help cases
+on :private, /^\!help/i do 
+    usage nick, HOME
+end
+
+on :private, /^\!usage/i do 
+    usage nick, HOME
+end
+
 on :private, /^\!\?/ do
-        OPTION_STR.split("\n").each { |s| msg nick, s }
+    usage nick, HOME
+end
+
+on :private, /^help/ do
+    usage nick, HOME
 end
 
 
 on :private, /^\!meme$/i do
-        meme = open(MEME_URL).read.chomp rescue  print_error('could not reach AutoMeme', nick)
+        meme = meme(nick, HOME)
         msg HOME, "#{nick}->#{meme}"
-        $logs['omnibot'].push(meme)
+end
+
+on :private, /^\!hipster$/i do 
+    hip = hipster(nick, HOME)
+    msg HOME, "#{nick}->#{hip}"
+end
+
+on :private, /^\!wiki\s+(.*)/i do |query|
+    res = wiki(nick, HOME, query)
+    msg HOME, "#{color(:yellow)}#{nick} -> wiki article for #{query}:"
+    msg HOME, "#{color(:yellow)}#{res} #{stop_color}"
 end
 
 
-on :private, /^\!wiki\s*(.*)/i do |query|
-    q = query.gsub(" ", "_")
-    cmd = "dig +short txt #{q}.wp.dg.cx"
-    res = %x[ #{cmd} ]
-    msg HOME, "#{color(:blue)}#{nick}: wiki article for #{query}:"
-    msg HOME, "#{color(:blue)} #{res} #{stop_color}"
-end
-
-
-on :private, /^\!tsearch\s+@(\w+)\s+@(\w+)\s*(.*)/i do |type, handle, msg|
+on :private, /^\!tsearch\s+(\w+)\s+(\w+)\s+(.*)/i do |type, handle, msg|
     if msg.nil?
         msg = " "
     end
-    tsearch nick, handle, msg, HOME, type
+    tsearch nick, HOME, type, handle, msg
 end
 
-on :private, /^\!tweet\s*:\s*(.*)/i do |t|
-        tweet nick, t, nick, HOME
-end
+#on :private, /^\!tweet\s*:\s*(.*)/i do |t|
+        #tweet nick, t, nick, HOME
+#end
 
-on :private, /^\!tweet\s*(\w*)\[(-?\d*)\]/i do |name, count|
-        count = 0 if count.nil? or count == ""
 
-        # if no name was provided, use the poster's nick
-        if name.nil? or name == ""
-                if $logs[nick].nil?
-                        print_error("no saved posts!", 1, nick)
-                else
-                        line = $logs[nick].at(count)
-                        if line.nil?
-                                print_error("no saved posts!", nick)
-                        else
-                                tweet nick, line, nick, HOME
-                        end
-                end
-        else
-        # we've been provided a nick to look for
-                if $logs[name].nil?
-                        print_error("no saved posts!", nick)
-                else
-                        line = $logs[name].at(count)
-                        if line.nil?
-                                print_error("no saved posts!", nick)
-                        else
-                                tweet name, line, nick, HOME
-                        end
-                end
-        end
-end
+#on :private, /^\!tweet\s+(\w+)\[(-?\d*)\]/i do |name, count|
+        #count = 0 if count.nil? or count == ""
+
+        ## if no name was provided, use the poster's nick
+        #if name.nil? or name == ""
+                #if $logs[nick].nil?
+                        #print_error("no saved posts!", 1, nick)
+                #else
+                        #line = $logs[nick].at(count)
+                        #if line.nil?
+                                #print_error("no saved posts!", nick)
+                        #else
+                                #tweet nick, line, nick, HOME
+                        #end
+                #end
+        #else
+        ## we've been provided a nick to look for
+                #if $logs[name].nil?
+                        #print_error("no saved posts!", nick)
+                #else
+                        #line = $logs[name].at(count)
+                        #if line.nil?
+                                #print_error("no saved posts!", nick)
+                        #else
+                                #tweet name, line, nick, HOME
+                        #end
+                #end
+        #end
+#end
 
 # the same as above
 on :private, /^\!log\s*(\w*)\[(-?\d*)\]/ do |name, count|
@@ -354,10 +473,15 @@ on :private, /^\!log\s*(\w*)\[(-?\d*)\]/ do |name, count|
         end
 end
 
-on :private, /^\!ascii\s*(.*)/ do |url|
-    ascii nick, HOME, url
+
+on :private, /^\!ascii\s+(\d+)?\s*(.*)/ do |width, url|
+    if width.nil?
+        width = 60
+    end
+    a = ascii nick, HOME, width, url
+    a.split("\n").each {|l| msg HOME, l}
 end
-    
+
 
 # the same as above
 on :private, /^\!publog\s*(\w*)\[(-?\d*)\]/ do |name, count|
@@ -388,20 +512,23 @@ on :private, /^\!publog\s*(\w*)\[(-?\d*)\]/ do |name, count|
         end
 end
 
-on :private, /^\!translate\s*from:(\w*)\s*to:(\w*)\s*(.*)/i do |fr, to,txt|
-    translate nick, HOME, fr, to, txt
+on :private, /^\!translate\s+(\w*)\s+(\w*)\s+(.*)/i do |fr, to,txt|
+    t = translate nick, HOME, fr, to, txt
+    msg HOME, "#{nick} says in '#{to}': #{t}"
 end
 
-on :private, /^\!translate\s*codes/i do 
-    trans_get_codes nick, HOME
+on :private, /^\!trans_codes$/i do 
+    out = trans_codes nick, HOME
+    msg nick, out
 end
 
-on :private, /^!cowsay\s*(.*)/i do |txt|
-    cowsay nick, HOME, txt
+on :private, /^!cowsay\s+(.*)/i do |txt|
+    cow = cowsay nick, HOME, txt
+    cow.split("\n").each{|l| msg HOME, l}
 end
 
-on :private, /^\!say (.*)/i do |txt|
-        msg HOME, txt
+on :private, /^\!say\s+(.*)/i do |txt|
+    msg HOME, txt
 end
 
 on :private, /^\!stats$/i do 
@@ -409,7 +536,6 @@ on :private, /^\!stats$/i do
 end
 
 on :private, /^\!cmd$/i do 
-        cmd = open(CMD_URL).read
-        cmd.split("\n").last(2).each {|l| msg HOME, l}
-        $logs['omnibot'].push(cmd)
+    c = cmd nick, HOME
+    c.split("\n").last(2).each {|l| msg HOME, l}
 end
