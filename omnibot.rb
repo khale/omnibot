@@ -239,7 +239,7 @@ helpers do
           colors = [:red, :blue, :green, :yellow, :purple, :orange]
           bar_length = 50
           i = 0
-          cont.keys.sort_by {|key| cont[k]}.each do |k| 
+          cont.keys.sort_by {|key| cont[key]}.each do |k| 
               frac = Float(cont[k])/Float(sum)
               percent = frac * 100.0
               num_dots = (frac * bar_length).to_int
